@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use serde::de::{value::Error as DeError, DeserializeSeed, SeqAccess};
 use serde::ser::Error as _;
 use sqlx::postgres::PgValueRef;
@@ -54,17 +56,17 @@ pub struct PgArraySeqAccess<T> {
 
 impl<'de, 'a, T> PgArraySeqAccess<T>
 where
-    T: sqlx::Decode<'a, sqlx::Postgres>,
+    T: sqlx::Decode<'a, sqlx::Postgres> + Debug,
 {
     /// Creates a new `PgArraySeqAccess` from a raw PostgreSQL array value.
     /// The raw value is decoded using `decode_raw_pg::<Vec<T>>(raw)`.
     pub fn new(value: PgValueRef<'a>) -> Self
     where
-        Vec<T>: sqlx::Decode<'a, sqlx::Postgres>,
+        Vec<T>: sqlx::Decode<'a, sqlx::Postgres> + Debug,
     {
         // Call your existing decoding function.
         let vec = decode_raw_pg::<Vec<T>>(value);
-        println!("Deserialized vec in PgArraySeqAccess");
+        println!("Deserialized vec in PgArraySeqAccess: {:?}", vec);
         PgArraySeqAccess {
             iter: vec.into_iter(),
         }
@@ -83,9 +85,12 @@ where
     {
         if let Some(value) = self.iter.next() {
             seed.deserialize(value.into_deserializer())
-                .map(Some)
+                .map(|x| {
+                    println!("Worked!");
+                    Some(x)
+                })
                 .map_err(|err| {
-                    println!("WAAAAA");
+                    eprintln!("WAAAAA");
                     err
                 })
         } else {

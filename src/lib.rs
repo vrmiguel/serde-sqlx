@@ -64,7 +64,10 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
         match self.row.columns().len() {
             0 => return visitor.visit_unit(),
             1 => {}
-            _ => return self.deserialize_seq(visitor),
+            n => {
+                println!("Columns was {n}");
+                return self.deserialize_seq(visitor);
+            }
         };
 
         let raw_value = self.row.try_get_raw(self.index).map_err(DeError::custom)?;
@@ -76,7 +79,6 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
         }
 
         match type_name {
-            // Fallback: decode as string
             last => {
                 println!("In fallback (PgRowDeserializer): last is {last}");
 
@@ -103,12 +105,29 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
     where
         V: Visitor<'de>,
     {
-        let seq_access = PgRowSeqAccess {
-            deserializer: self,
-            num_cols: self.row.columns().len(),
-        };
+        let raw_value = self.row.try_get_raw(self.index).map_err(DeError::custom)?;
+        let type_info = raw_value.type_info();
+        let type_name = type_info.name();
 
-        visitor.visit_seq(seq_access)
+        match type_name {
+            "TEXT[]" | "VARCHAR[]" => {
+                let seq_access = PgArraySeqAccess::<String>::new(raw_value);
+                visitor.visit_seq(seq_access)
+            }
+            "INT4[]" => {
+                println!("INT4 found!");
+                let seq_access = PgArraySeqAccess::<i32>::new(raw_value);
+                visitor.visit_seq(seq_access)
+            }
+            _ => {
+                let seq_access = PgRowSeqAccess {
+                    deserializer: self,
+                    num_cols: self.row.columns().len(),
+                };
+
+                visitor.visit_seq(seq_access)
+            }
+        }
     }
 
     fn deserialize_tuple<V>(self, _len: usize, visitor: V) -> Result<V::Value, Self::Error>
@@ -226,10 +245,6 @@ impl<'de, 'a> Deserializer<'de> for PgValueDeserializer<'a> {
 
                 let json_map = JsonValueMapAccess::new(value).map_err(DeError::custom)?;
                 visitor.visit_map(json_map)
-            }
-            "TEXT[]" | "VARCHAR[]" => {
-                let seq_access = PgArraySeqAccess::<String>::new(self.value);
-                visitor.visit_seq(seq_access)
             }
             // Fallback: decode as string
             last => {

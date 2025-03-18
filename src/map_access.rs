@@ -8,7 +8,6 @@ use crate::{PgRowDeserializer, PgValueDeserializer};
 
 /// MapAccess for serde_json::Value
 pub(crate) struct JsonValueMapAccess {
-    /// An iterator over the JSON object's entries.
     iter: serde_json::map::IntoIter,
     /// Holds the value from the current key/value pair
     current: Option<Value>,
@@ -56,7 +55,6 @@ impl<'de, 'a> MapAccess<'de> for JsonValueMapAccess {
     }
 }
 
-/// A MapAccess implementation that iterates over the row’s columns.
 pub(crate) struct PgRowMapAccess<'a> {
     pub(crate) deserializer: PgRowDeserializer<'a>,
     pub(crate) num_cols: usize,
@@ -88,11 +86,6 @@ impl<'de, 'a> MapAccess<'de> for PgRowMapAccess<'a> {
             .try_get_raw(self.deserializer.index)
             .map_err(DeError::custom)?;
         let pg_type_deserializer = PgValueDeserializer { value };
-
-        println!(
-            "Starting pg_type_deserializer for index {}",
-            self.deserializer.index
-        );
 
         self.deserializer.index += 1;
 
