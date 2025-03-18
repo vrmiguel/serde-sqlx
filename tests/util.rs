@@ -2,7 +2,7 @@ use serde::Deserialize;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use tokio::sync::OnceCell;
 
-async fn fetch_one<T: for<'de> serde::Deserialize<'de>>(query: &str) -> anyhow::Result<T> {
+pub async fn fetch_one<T: for<'de> serde::Deserialize<'de>>(query: &str) -> anyhow::Result<T> {
     let conn = conn().await;
 
     let row = sqlx::query(query).fetch_one(&conn).await.unwrap();
@@ -10,7 +10,7 @@ async fn fetch_one<T: for<'de> serde::Deserialize<'de>>(query: &str) -> anyhow::
     serde_sqlx::from_pg_row(row).map_err(Into::into)
 }
 
-async fn fetch_all<T: for<'de> serde::Deserialize<'de>>(query: &str) -> anyhow::Result<Vec<T>> {
+pub async fn fetch_all<T: for<'de> serde::Deserialize<'de>>(query: &str) -> anyhow::Result<Vec<T>> {
     let conn = conn().await;
 
     let row = sqlx::query(query).fetch_all(&conn).await.unwrap();
@@ -19,7 +19,7 @@ async fn fetch_all<T: for<'de> serde::Deserialize<'de>>(query: &str) -> anyhow::
     result.map_err(Into::into)
 }
 
-async fn fetch_optional<T: for<'de> serde::Deserialize<'de>>(
+pub async fn fetch_optional<T: for<'de> serde::Deserialize<'de>>(
     query: &str,
 ) -> anyhow::Result<Option<T>> {
     let conn = conn().await;

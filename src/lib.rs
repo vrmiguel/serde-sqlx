@@ -36,7 +36,69 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
     where
         V: Visitor<'de>,
     {
-        self.deserialize_map(visitor)
+        match self.row.columns().len() {
+            0 => return visitor.visit_unit(),
+            1 => {}
+            _ => unimplemented!("deserialize_any (many columns: {:#?})", self.row.columns()),
+        };
+
+        let raw_value = self.row.try_get_raw(0).map_err(DeError::custom)?;
+        let type_info = raw_value.type_info();
+        let type_name = type_info.name();
+
+        match type_name {
+            // Floating point numbers (using official types)
+            "FLOAT4" | "FLOAT8" | "NUMERIC" => visitor.visit_f64(decode_raw_pg::<f64>(raw_value)),
+            // 64-bit signed integers
+            "INT8" => visitor.visit_i64(decode_raw_pg::<i64>(raw_value)),
+            // 32-bit signed integers
+            "INT4" => visitor.visit_i32(decode_raw_pg::<i32>(raw_value)),
+            // 16-bit signed integers
+            "INT2" => visitor.visit_i16(decode_raw_pg::<i16>(raw_value)),
+            // Boolean values
+            "BOOL" => visitor.visit_bool(decode_raw_pg::<bool>(raw_value)),
+            // Date type: convert to string and pass to visitor
+            "DATE" => {
+                let date_str = decode_raw_pg::<chrono::NaiveDate>(raw_value).to_string();
+                visitor.visit_string(date_str)
+            }
+            // Time types: convert to string
+            "TIME" | "TIMETZ" => {
+                let time_str = decode_raw_pg::<chrono::NaiveTime>(raw_value).to_string();
+                visitor.visit_string(time_str)
+            }
+            // Timestamp types: convert to RFC 3339 string
+            "TIMESTAMP" | "TIMESTAMPTZ" => {
+                let ts_str =
+                    decode_raw_pg::<chrono::DateTime<chrono::FixedOffset>>(raw_value).to_rfc3339();
+                visitor.visit_string(ts_str)
+            }
+            // UUID: convert to string
+            "UUID" => {
+                let uuid_str = decode_raw_pg::<uuid::Uuid>(raw_value).to_string();
+                visitor.visit_string(uuid_str)
+            }
+            // Binary data: BYTEA (assumes visitor has a method for bytes)
+            "BYTEA" => visitor.visit_bytes(decode_raw_pg::<&[u8]>(raw_value)),
+            // Interval type: convert to string (adjust if you have a dedicated method)
+            "INTERVAL" => {
+                let pg_interval = decode_raw_pg::<sqlx::postgres::types::PgInterval>(raw_value);
+                // Convert microseconds to seconds and nanoseconds.
+                let secs = pg_interval.microseconds / 1_000_000;
+                let nanos = (pg_interval.microseconds % 1_000_000) * 1000;
+                // Convert days to duration (ignoring months)
+                let days_duration = chrono::Duration::days(pg_interval.days as i64);
+                let duration = chrono::Duration::seconds(secs)
+                    + chrono::Duration::nanoseconds(nanos)
+                    + days_duration;
+
+                visitor.visit_string(duration.to_string())
+            }
+            // JSON types: decode to JSON value and pass to visitor (rename method as needed)
+            "JSON" | "JSONB" => self.deserialize_map(visitor),
+            // Fallback: decode as string
+            _ => visitor.visit_string(decode_raw_pg::<String>(raw_value)),
+        }
     }
 
     /// We treat the row as a map (each column is a key/value pair)
@@ -126,8 +188,6 @@ fn sql_nonnull_to_json_pg<'r>(mut get_ref: impl FnMut() -> PgValueRef<'r>) -> Js
     let raw_value = get_ref();
     let type_info = raw_value.type_info();
     let type_name = type_info.name();
-    // type_info.name()
-    let s = type_info.deref();
 
     match type_name {
         // Floating point numbers (NUMERIC/DECIMAL are decoded as f64)
