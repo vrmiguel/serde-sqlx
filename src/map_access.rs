@@ -6,8 +6,7 @@ use sqlx::{Column, Row};
 
 use crate::{PgRowDeserializer, PgValueDeserializer};
 
-/// A MapAccess implementation for a JSON object (serde_json::Value).
-/// It expects that the JSON value is an Object.
+/// MapAccess for serde_json::Value
 pub(crate) struct JsonValueMapAccess {
     /// An iterator over the JSON object's entries.
     iter: serde_json::map::IntoIter,
@@ -16,8 +15,6 @@ pub(crate) struct JsonValueMapAccess {
 }
 
 impl JsonValueMapAccess {
-    /// Create a new JsonValueMapAccess from a reference to a JSON object.
-    /// Returns an error if the provided value is not an object.
     pub fn new(json: Value) -> Result<Self, DeError> {
         match json {
             Value::Object(map) => Ok(JsonValueMapAccess {
@@ -37,9 +34,9 @@ impl<'de, 'a> MapAccess<'de> for JsonValueMapAccess {
         K: DeserializeSeed<'de>,
     {
         if let Some((key, value)) = self.iter.next() {
-            // Save the current entry so next_value_seed() can use it.
+            // Save the current entry so next_value_seed() can use it
             self.current = Some(value);
-            // Deserialize the key using its own deserializer.
+
             seed.deserialize(key.into_deserializer()).map(Some)
         } else {
             Ok(None)
@@ -50,7 +47,7 @@ impl<'de, 'a> MapAccess<'de> for JsonValueMapAccess {
     where
         V: DeserializeSeed<'de>,
     {
-        // Retrieve the stored value from next_key_seed.
+        // Retrieve the stored value from next_key_seed
         if let Some(value) = self.current.take() {
             seed.deserialize(value).map_err(DeError::custom)
         } else {
@@ -74,7 +71,7 @@ impl<'de, 'a> MapAccess<'de> for PgRowMapAccess<'a> {
     {
         if self.deserializer.index < self.num_cols {
             let col_name = self.deserializer.row.columns()[self.deserializer.index].name();
-            // Use the column name as the key.
+            // Use the column name as the key
             seed.deserialize(col_name.into_deserializer()).map(Some)
         } else {
             Ok(None)
