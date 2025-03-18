@@ -31,6 +31,19 @@ impl<'a> PgRowDeserializer<'a> {
 impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
     type Error = DeError;
 
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        let raw_value = self.row.try_get_raw(0).map_err(DeError::custom)?;
+
+        if raw_value.is_null() {
+            visitor.visit_none()
+        } else {
+            visitor.visit_some(self)
+        }
+    }
+
     // For “any” type we delegate to our map implementation.
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
@@ -46,9 +59,14 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
         let type_info = raw_value.type_info();
         let type_name = type_info.name();
 
+        if raw_value.is_null() {
+            return visitor.visit_none();
+        }
+
         match type_name {
             // Floating point numbers (using official types)
-            "FLOAT4" | "FLOAT8" | "NUMERIC" => visitor.visit_f64(decode_raw_pg::<f64>(raw_value)),
+            "FLOAT4" => visitor.visit_f32(decode_raw_pg::<f32>(raw_value)),
+            "FLOAT8" | "NUMERIC" => visitor.visit_f64(decode_raw_pg::<f64>(raw_value)),
             // 64-bit signed integers
             "INT8" => visitor.visit_i64(decode_raw_pg::<i64>(raw_value)),
             // 32-bit signed integers
@@ -78,9 +96,9 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
                 let uuid_str = decode_raw_pg::<uuid::Uuid>(raw_value).to_string();
                 visitor.visit_string(uuid_str)
             }
-            // Binary data: BYTEA (assumes visitor has a method for bytes)
+            // Binary data: BYTEA
             "BYTEA" => visitor.visit_bytes(decode_raw_pg::<&[u8]>(raw_value)),
-            // Interval type: convert to string (adjust if you have a dedicated method)
+            // Interval type: convert to chrono
             "INTERVAL" => {
                 let pg_interval = decode_raw_pg::<sqlx::postgres::types::PgInterval>(raw_value);
                 // Convert microseconds to seconds and nanoseconds.
@@ -94,10 +112,17 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
 
                 visitor.visit_string(duration.to_string())
             }
-            // JSON types: decode to JSON value and pass to visitor (rename method as needed)
+            // JSON types: decode as map
             "JSON" | "JSONB" => self.deserialize_map(visitor),
+            "CHAR" | "TEXT" => visitor.visit_string(decode_raw_pg::<String>(raw_value)),
             // Fallback: decode as string
-            _ => visitor.visit_string(decode_raw_pg::<String>(raw_value)),
+            last => {
+                println!("In fallback: last is {last}");
+                let as_string = decode_raw_pg::<String>(raw_value);
+                visitor.visit_string(as_string)
+
+                // visitor.visit_some(deserializer)
+            }
         }
     }
 
@@ -116,7 +141,7 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
     // For other types, forward to deserialize_any.
     forward_to_deserialize_any! {
         bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string
-        bytes byte_buf option unit unit_struct newtype_struct seq tuple
+        bytes byte_buf unit unit_struct newtype_struct seq tuple
         tuple_struct struct enum identifier ignored_any
     }
 }
