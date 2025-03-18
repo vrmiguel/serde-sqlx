@@ -1,13 +1,13 @@
 use std::fmt::Debug;
 
-use serde::de::{value::Error as DeError, DeserializeSeed, SeqAccess};
+use serde::de::{value::Error as DeError, DeserializeSeed, SeqAccess, Visitor};
 use serde::ser::Error as _;
-use sqlx::postgres::PgValueRef;
-use sqlx::Row;
+use serde::{de, forward_to_deserialize_any};
+use sqlx::{postgres::PgValueRef, Row};
 
 use crate::{decode_raw_pg, PgRowDeserializer, PgValueDeserializer};
 
-/// A SeqAccess implementation that iterates over the row’s columns.
+/// A SeqAccess implementation that iterates over the row’s columns
 pub(crate) struct PgRowSeqAccess<'a> {
     pub(crate) deserializer: PgRowDeserializer<'a>,
     pub(crate) num_cols: usize,
@@ -47,29 +47,27 @@ impl<'de, 'a> SeqAccess<'de> for PgRowSeqAccess<'a> {
 
 use serde::de::IntoDeserializer;
 
-/// A custom SeqAccess implementation for PostgreSQL arrays.
-/// It decodes a raw PostgreSQL array (e.g. TEXT[]) into a `Vec<T>` and
-/// then yields each element during deserialization.
+/// SeqAccess implementation for Postgres arrays
+/// It decodes a raw Postgres array, such as TEXT[] into a `Vec<Option<T>>` and
+/// then yields each element during deserialization
 pub struct PgArraySeqAccess<T> {
-    iter: std::vec::IntoIter<T>,
+    iter: std::vec::IntoIter<Option<T>>,
 }
 
 impl<'de, 'a, T> PgArraySeqAccess<T>
 where
     T: sqlx::Decode<'a, sqlx::Postgres> + Debug,
 {
-    /// Creates a new `PgArraySeqAccess` from a raw PostgreSQL array value.
-    /// The raw value is decoded using `decode_raw_pg::<Vec<T>>(raw)`.
-    pub fn new(value: PgValueRef<'a>) -> Self
+    pub fn new(value: PgValueRef<'a>) -> Result<Self, DeError>
     where
-        Vec<T>: sqlx::Decode<'a, sqlx::Postgres> + Debug,
+        Vec<Option<T>>: sqlx::Decode<'a, sqlx::Postgres> + Debug,
     {
-        // Call your existing decoding function.
-        let vec = decode_raw_pg::<Vec<T>>(value);
-        println!("Deserialized vec in PgArraySeqAccess: {:?}", vec);
-        PgArraySeqAccess {
+        let vec: Vec<Option<T>> = decode_raw_pg(value)
+            .ok_or_else(|| DeError::custom("Failed to decode PostgreSQL array"))?;
+
+        Ok(PgArraySeqAccess {
             iter: vec.into_iter(),
-        }
+        })
     }
 }
 
@@ -83,18 +81,51 @@ where
     where
         U: DeserializeSeed<'de>,
     {
-        if let Some(value) = self.iter.next() {
-            seed.deserialize(value.into_deserializer())
-                .map(|x| {
-                    println!("Worked!");
-                    Some(x)
-                })
-                .map_err(|err| {
-                    eprintln!("WAAAAA");
-                    err
-                })
-        } else {
-            Ok(None)
+        let Some(value) = self.iter.next() else {
+            return Ok(None);
+        };
+
+        seed.deserialize(PgArrayElementDeserializer { value })
+            .map(Some)
+    }
+}
+
+/// Yet another deserializer, this time to handles Options
+struct PgArrayElementDeserializer<T> {
+    pub value: Option<T>,
+}
+
+impl<'de, T> de::Deserializer<'de> for PgArrayElementDeserializer<T>
+where
+    T: IntoDeserializer<'de, DeError>,
+{
+    type Error = DeError;
+
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        match self.value {
+            Some(v) => visitor.visit_some(v.into_deserializer()),
+            None => visitor.visit_none(),
         }
+    }
+
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        match self.value {
+            Some(v) => v.into_deserializer().deserialize_any(visitor),
+            None => Err(DeError::custom(
+                "unexpected null in non-optional array element",
+            )),
+        }
+    }
+
+    forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bytes byte_buf unit unit_struct newtype_struct seq tuple tuple_struct
+        map struct enum identifier ignored_any
     }
 }

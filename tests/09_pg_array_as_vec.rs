@@ -40,17 +40,18 @@ async fn pg_arr_of_text_as_vec_nullable_string() {
         fetch_all("SELECT array_agg(R.a) _0 FROM (SELECT 'a string' a UNION ALL SELECT NULL) R")
             .await
             .unwrap();
+
     assert_eq!(rows, vec![vec![Some("a string".to_owned()), None]]);
 }
 
 #[tokio::test]
 async fn pg_arr_of_varchar_as_vec_nullable_string() {
-    let rows: Vec<Option<String>> = fetch_all(
+    let rows: Vec<Vec<Option<String>>> = fetch_all(
         "SELECT array_agg(R.a) _0 FROM (SELECT 'a string'::VARCHAR a UNION ALL SELECT NULL) R",
     )
     .await
     .unwrap();
-    assert_eq!(rows, vec![Some("a string".to_owned()), None]);
+    assert_eq!(rows, vec![vec![Some("a string".to_owned()), None]]);
 }
 
 #[tokio::test]

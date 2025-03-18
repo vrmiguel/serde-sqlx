@@ -78,16 +78,15 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
             return visitor.visit_none();
         }
 
-        match type_name {
-            last => {
-                println!("In fallback (PgRowDeserializer): last is {last}");
-
-                // Direct all "basic" types down to `PgValueDeserializer`
-                let deserializer = PgValueDeserializer { value: raw_value };
-
-                deserializer.deserialize_any(visitor)
-            }
+        // If this is a BOOL[], TEXT[], etc
+        if type_name.ends_with("[]") {
+            return self.deserialize_seq(visitor);
         }
+
+        // Direct all "basic" types down to `PgValueDeserializer`
+        let deserializer = PgValueDeserializer { value: raw_value };
+
+        deserializer.deserialize_any(visitor)
     }
 
     /// We treat the row as a map (each column is a key/value pair)
@@ -105,18 +104,25 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
     where
         V: Visitor<'de>,
     {
+        println!("Columns: {}", self.row.columns().len());
+
         let raw_value = self.row.try_get_raw(self.index).map_err(DeError::custom)?;
         let type_info = raw_value.type_info();
         let type_name = type_info.name();
+        println!("Type: {type_name}");
 
         match type_name {
             "TEXT[]" | "VARCHAR[]" => {
-                let seq_access = PgArraySeqAccess::<String>::new(raw_value);
+                let seq_access = PgArraySeqAccess::<String>::new(raw_value)?;
                 visitor.visit_seq(seq_access)
             }
             "INT4[]" => {
                 println!("INT4 found!");
-                let seq_access = PgArraySeqAccess::<i32>::new(raw_value);
+                let seq_access = PgArraySeqAccess::<i32>::new(raw_value)?;
+                visitor.visit_seq(seq_access)
+            }
+            "BOOL[]" => {
+                let seq_access = PgArraySeqAccess::<bool>::new(raw_value)?;
                 visitor.visit_seq(seq_access)
             }
             _ => {
@@ -159,7 +165,7 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
 
 /// An "inner" deserializer
 #[derive(Clone)]
-pub struct PgValueDeserializer<'a> {
+struct PgValueDeserializer<'a> {
     value: PgValueRef<'a>,
 }
 
@@ -189,67 +195,88 @@ impl<'de, 'a> Deserializer<'de> for PgValueDeserializer<'a> {
         let type_name = type_info.name();
 
         match type_name {
-            // Floating point numbers (using official types)
-            "FLOAT4" => visitor.visit_f32(decode_raw_pg::<f32>(self.value)),
-            "FLOAT8" | "NUMERIC" => visitor.visit_f64(decode_raw_pg::<f64>(self.value)),
-            // 64-bit signed integers
-            "INT8" => visitor.visit_i64(decode_raw_pg::<i64>(self.value)),
-            // 32-bit signed integers
-            "INT4" => visitor.visit_i32(decode_raw_pg::<i32>(self.value)),
-            // 16-bit signed integers
-            "INT2" => visitor.visit_i16(decode_raw_pg::<i16>(self.value)),
-            // Boolean values
-            "BOOL" => visitor.visit_bool(decode_raw_pg::<bool>(self.value)),
-            // Date type: convert to string and pass to visitor
+            "FLOAT4" => {
+                let v = decode_raw_pg::<f32>(self.value)
+                    .ok_or_else(|| DeError::custom("Failed to decode FLOAT4"))?;
+                visitor.visit_f32(v)
+            }
+            "FLOAT8" | "NUMERIC" => {
+                let v = decode_raw_pg::<f64>(self.value)
+                    .ok_or_else(|| DeError::custom("Failed to decode FLOAT8/NUMERIC"))?;
+                visitor.visit_f64(v)
+            }
+            "INT8" => {
+                let v = decode_raw_pg::<i64>(self.value)
+                    .ok_or_else(|| DeError::custom("Failed to decode INT8"))?;
+                visitor.visit_i64(v)
+            }
+            "INT4" => {
+                let v = decode_raw_pg::<i32>(self.value)
+                    .ok_or_else(|| DeError::custom("Failed to decode INT4"))?;
+                visitor.visit_i32(v)
+            }
+            "INT2" => {
+                let v = decode_raw_pg::<i16>(self.value)
+                    .ok_or_else(|| DeError::custom("Failed to decode INT2"))?;
+                visitor.visit_i16(v)
+            }
+            "BOOL" => {
+                let v = decode_raw_pg::<bool>(self.value)
+                    .ok_or_else(|| DeError::custom("Failed to decode BOOL"))?;
+                visitor.visit_bool(v)
+            }
             "DATE" => {
-                let date_str = decode_raw_pg::<chrono::NaiveDate>(self.value).to_string();
-                visitor.visit_string(date_str)
+                let date = decode_raw_pg::<chrono::NaiveDate>(self.value)
+                    .ok_or_else(|| DeError::custom("Failed to decode DATE"))?;
+                visitor.visit_string(date.to_string())
             }
-            // Time types: convert to string
             "TIME" | "TIMETZ" => {
-                let time_str = decode_raw_pg::<chrono::NaiveTime>(self.value).to_string();
-                visitor.visit_string(time_str)
+                let time = decode_raw_pg::<chrono::NaiveTime>(self.value)
+                    .ok_or_else(|| DeError::custom("Failed to decode TIME/TIMETZ"))?;
+                visitor.visit_string(time.to_string())
             }
-            // Timestamp types: convert to RFC 3339 string
             "TIMESTAMP" | "TIMESTAMPTZ" => {
-                let ts_str =
-                    decode_raw_pg::<chrono::DateTime<chrono::FixedOffset>>(self.value).to_rfc3339();
-                visitor.visit_string(ts_str)
+                let ts = decode_raw_pg::<chrono::DateTime<chrono::FixedOffset>>(self.value)
+                    .ok_or_else(|| DeError::custom("Failed to decode TIMESTAMP/TIMESTAMPTZ"))?;
+                visitor.visit_string(ts.to_rfc3339())
             }
-            // UUID: convert to string
             "UUID" => {
-                let uuid_str = decode_raw_pg::<uuid::Uuid>(self.value).to_string();
-                visitor.visit_string(uuid_str)
+                let uuid = decode_raw_pg::<uuid::Uuid>(self.value)
+                    .ok_or_else(|| DeError::custom("Failed to decode UUID"))?;
+                visitor.visit_string(uuid.to_string())
             }
-            // Binary data: BYTEA
-            "BYTEA" => visitor.visit_bytes(decode_raw_pg::<&[u8]>(self.value)),
-            // Interval type: convert to chrono
+            "BYTEA" => {
+                let bytes = decode_raw_pg::<&[u8]>(self.value)
+                    .ok_or_else(|| DeError::custom("Failed to decode BYTEA"))?;
+                visitor.visit_bytes(bytes)
+            }
             "INTERVAL" => {
-                let pg_interval = decode_raw_pg::<sqlx::postgres::types::PgInterval>(self.value);
-                // Convert microseconds to seconds and nanoseconds.
+                let pg_interval = decode_raw_pg::<sqlx::postgres::types::PgInterval>(self.value)
+                    .ok_or_else(|| DeError::custom("Failed to decode INTERVAL"))?;
                 let secs = pg_interval.microseconds / 1_000_000;
                 let nanos = (pg_interval.microseconds % 1_000_000) * 1000;
-                // Convert days to duration (ignoring months)
                 let days_duration = chrono::Duration::days(pg_interval.days as i64);
                 let duration = chrono::Duration::seconds(secs)
                     + chrono::Duration::nanoseconds(nanos)
                     + days_duration;
-
                 visitor.visit_string(duration.to_string())
             }
-            "CHAR" | "TEXT" => visitor.visit_string(decode_raw_pg::<String>(self.value)),
+            "CHAR" | "TEXT" => {
+                let s = decode_raw_pg::<String>(self.value)
+                    .ok_or_else(|| DeError::custom("Failed to decode TEXT/CHAR"))?;
+                visitor.visit_string(s)
+            }
             "JSON" | "JSONB" => {
-                let value: serde_json::Value =
-                    serde_json::from_str(decode_raw_pg::<&str>(self.value))
-                        .map_err(DeError::custom)?;
-
+                let s = decode_raw_pg::<&str>(self.value)
+                    .ok_or_else(|| DeError::custom("Failed to decode JSON/JSONB"))?;
+                let value: serde_json::Value = serde_json::from_str(s).map_err(DeError::custom)?;
                 let json_map = JsonValueMapAccess::new(value).map_err(DeError::custom)?;
                 visitor.visit_map(json_map)
             }
-            // Fallback: decode as string
             last => {
                 println!("In fallback (PgValueDeserializer): last is {last}");
-                let as_string = decode_raw_pg::<String>(self.value);
+                let as_string = decode_raw_pg::<String>(self.value.clone())
+                    .ok_or_else(|| DeError::custom(format!("Failed to decode type {last}")))?;
                 visitor.visit_string(as_string)
             }
         }
@@ -263,21 +290,21 @@ impl<'de, 'a> Deserializer<'de> for PgValueDeserializer<'a> {
     }
 }
 
-/// Decode a raw Postgres value into a type T using sqlx’s Decode.
-/// On error, log and return T::default().
-fn decode_raw_pg<'a, T>(raw_value: PgValueRef<'a>) -> T
+/// Decode a raw Postgres value into a type T using sqlx’s Decode,
+/// returning an Option<T> instead of a default value on error.
+fn decode_raw_pg<'a, T>(raw_value: PgValueRef<'a>) -> Option<T>
 where
-    T: sqlx::Decode<'a, sqlx::Postgres> + Default,
+    T: sqlx::Decode<'a, sqlx::Postgres>,
 {
     match T::decode(raw_value) {
-        Ok(v) => v,
+        Ok(v) => Some(v),
         Err(e) => {
-            log::error!(
+            eprintln!(
                 "Failed to decode {} value: {:?}",
                 std::any::type_name::<T>(),
                 e
             );
-            T::default()
+            None
         }
     }
 }
