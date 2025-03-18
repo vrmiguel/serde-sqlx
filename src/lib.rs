@@ -1,13 +1,11 @@
-use std::ops::Deref;
-
+use map_access::{JsonValueMapAccess, PgRowMapAccess};
 use serde::de::Error as _;
-use serde::de::{
-    self, value::Error as DeError, Deserialize, Deserializer, IntoDeserializer, MapAccess, Visitor,
-};
+use serde::de::{value::Error as DeError, Deserialize, Deserializer, Visitor};
 use serde::forward_to_deserialize_any;
-use serde_json::Value as JsonValue;
-use sqlx::postgres::{PgColumn, PgRow, PgValueRef};
-use sqlx::{Column, Row, TypeInfo, ValueRef};
+use sqlx::postgres::{PgRow, PgValueRef};
+use sqlx::{Row, TypeInfo, ValueRef};
+
+mod map_access;
 
 /// Convenience function: deserialize a PgRow into any T that implements Deserialize
 pub fn from_pg_row<T>(row: PgRow) -> Result<T, DeError>
@@ -18,13 +16,15 @@ where
     T::deserialize(deserializer)
 }
 
+#[derive(Clone, Copy)]
 pub struct PgRowDeserializer<'a> {
     row: &'a PgRow,
+    index: usize,
 }
 
 impl<'a> PgRowDeserializer<'a> {
     pub fn new(row: &'a PgRow) -> Self {
-        PgRowDeserializer { row }
+        PgRowDeserializer { row, index: 0 }
     }
 }
 
@@ -46,7 +46,7 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
 
     fn deserialize_newtype_struct<V>(
         self,
-        name: &'static str,
+        _name: &'static str,
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
@@ -65,7 +65,7 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
             _ => unimplemented!("deserialize_any (many columns: {:#?})", self.row.columns()),
         };
 
-        let raw_value = self.row.try_get_raw(0).map_err(DeError::custom)?;
+        let raw_value = self.row.try_get_raw(self.index).map_err(DeError::custom)?;
         let type_info = raw_value.type_info();
         let type_name = type_info.name();
 
@@ -74,64 +74,18 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
         }
 
         match type_name {
-            // Floating point numbers (using official types)
-            "FLOAT4" => visitor.visit_f32(decode_raw_pg::<f32>(raw_value)),
-            "FLOAT8" | "NUMERIC" => visitor.visit_f64(decode_raw_pg::<f64>(raw_value)),
-            // 64-bit signed integers
-            "INT8" => visitor.visit_i64(decode_raw_pg::<i64>(raw_value)),
-            // 32-bit signed integers
-            "INT4" => visitor.visit_i32(decode_raw_pg::<i32>(raw_value)),
-            // 16-bit signed integers
-            "INT2" => visitor.visit_i16(decode_raw_pg::<i16>(raw_value)),
-            // Boolean values
-            "BOOL" => visitor.visit_bool(decode_raw_pg::<bool>(raw_value)),
-            // Date type: convert to string and pass to visitor
-            "DATE" => {
-                let date_str = decode_raw_pg::<chrono::NaiveDate>(raw_value).to_string();
-                visitor.visit_string(date_str)
-            }
-            // Time types: convert to string
-            "TIME" | "TIMETZ" => {
-                let time_str = decode_raw_pg::<chrono::NaiveTime>(raw_value).to_string();
-                visitor.visit_string(time_str)
-            }
-            // Timestamp types: convert to RFC 3339 string
-            "TIMESTAMP" | "TIMESTAMPTZ" => {
-                let ts_str =
-                    decode_raw_pg::<chrono::DateTime<chrono::FixedOffset>>(raw_value).to_rfc3339();
-                visitor.visit_string(ts_str)
-            }
-            // UUID: convert to string
-            "UUID" => {
-                let uuid_str = decode_raw_pg::<uuid::Uuid>(raw_value).to_string();
-                visitor.visit_string(uuid_str)
-            }
-            // Binary data: BYTEA
-            "BYTEA" => visitor.visit_bytes(decode_raw_pg::<&[u8]>(raw_value)),
-            // Interval type: convert to chrono
-            "INTERVAL" => {
-                let pg_interval = decode_raw_pg::<sqlx::postgres::types::PgInterval>(raw_value);
-                // Convert microseconds to seconds and nanoseconds.
-                let secs = pg_interval.microseconds / 1_000_000;
-                let nanos = (pg_interval.microseconds % 1_000_000) * 1000;
-                // Convert days to duration (ignoring months)
-                let days_duration = chrono::Duration::days(pg_interval.days as i64);
-                let duration = chrono::Duration::seconds(secs)
-                    + chrono::Duration::nanoseconds(nanos)
-                    + days_duration;
-
-                visitor.visit_string(duration.to_string())
-            }
-            // JSON types: decode as map
-            "JSON" | "JSONB" => self.deserialize_map(visitor),
-            "CHAR" | "TEXT" => visitor.visit_string(decode_raw_pg::<String>(raw_value)),
             // Fallback: decode as string
             last => {
-                println!("In fallback: last is {last}");
-                let as_string = decode_raw_pg::<String>(raw_value);
-                visitor.visit_string(as_string)
+                println!("In fallback (PgRowDeserializer): last is {last}");
 
-                // visitor.visit_some(deserializer)
+                // Direct all "basic" types down to `PgValueDeserializer`
+                let deserializer = PgValueDeserializer {
+                    outer: self,
+                    value: raw_value,
+                    index: 0,
+                };
+
+                deserializer.deserialize_any(visitor)
             }
         }
     }
@@ -142,8 +96,7 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
         V: Visitor<'de>,
     {
         visitor.visit_map(PgRowMapAccess {
-            row: self.row,
-            index: 0,
+            deserializer: self,
             num_cols: self.row.columns().len(),
         })
     }
@@ -182,110 +135,102 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
     }
 }
 
-/// A MapAccess implementation that iterates over the row’s columns.
-struct PgRowMapAccess<'a> {
-    row: &'a PgRow,
+/// An "inner" deserializer
+#[derive(Clone)]
+pub struct PgValueDeserializer<'a> {
+    value: PgValueRef<'a>,
+    outer: PgRowDeserializer<'a>,
     index: usize,
-    num_cols: usize,
 }
 
-impl<'de, 'a> MapAccess<'de> for PgRowMapAccess<'a> {
+impl<'de, 'a> Deserializer<'de> for PgValueDeserializer<'a> {
     type Error = DeError;
 
-    fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        K: de::DeserializeSeed<'de>,
+        V: Visitor<'de>,
     {
-        if self.index < self.num_cols {
-            let col_name = self.row.columns()[self.index].name();
-            // Use the column name as the key.
-            seed.deserialize(col_name.into_deserializer()).map(Some)
-        } else {
-            Ok(None)
+        if self.value.is_null() {
+            return visitor.visit_none();
+        }
+        let type_info = self.value.type_info();
+
+        let type_name = type_info.name();
+
+        match type_name {
+            // Floating point numbers (using official types)
+            "FLOAT4" => visitor.visit_f32(decode_raw_pg::<f32>(self.value)),
+            "FLOAT8" | "NUMERIC" => visitor.visit_f64(decode_raw_pg::<f64>(self.value)),
+            // 64-bit signed integers
+            "INT8" => visitor.visit_i64(decode_raw_pg::<i64>(self.value)),
+            // 32-bit signed integers
+            "INT4" => visitor.visit_i32(decode_raw_pg::<i32>(self.value)),
+            // 16-bit signed integers
+            "INT2" => visitor.visit_i16(decode_raw_pg::<i16>(self.value)),
+            // Boolean values
+            "BOOL" => visitor.visit_bool(decode_raw_pg::<bool>(self.value)),
+            // Date type: convert to string and pass to visitor
+            "DATE" => {
+                let date_str = decode_raw_pg::<chrono::NaiveDate>(self.value).to_string();
+                visitor.visit_string(date_str)
+            }
+            // Time types: convert to string
+            "TIME" | "TIMETZ" => {
+                let time_str = decode_raw_pg::<chrono::NaiveTime>(self.value).to_string();
+                visitor.visit_string(time_str)
+            }
+            // Timestamp types: convert to RFC 3339 string
+            "TIMESTAMP" | "TIMESTAMPTZ" => {
+                let ts_str =
+                    decode_raw_pg::<chrono::DateTime<chrono::FixedOffset>>(self.value).to_rfc3339();
+                visitor.visit_string(ts_str)
+            }
+            // UUID: convert to string
+            "UUID" => {
+                let uuid_str = decode_raw_pg::<uuid::Uuid>(self.value).to_string();
+                visitor.visit_string(uuid_str)
+            }
+            // Binary data: BYTEA
+            "BYTEA" => visitor.visit_bytes(decode_raw_pg::<&[u8]>(self.value)),
+            // Interval type: convert to chrono
+            "INTERVAL" => {
+                let pg_interval = decode_raw_pg::<sqlx::postgres::types::PgInterval>(self.value);
+                // Convert microseconds to seconds and nanoseconds.
+                let secs = pg_interval.microseconds / 1_000_000;
+                let nanos = (pg_interval.microseconds % 1_000_000) * 1000;
+                // Convert days to duration (ignoring months)
+                let days_duration = chrono::Duration::days(pg_interval.days as i64);
+                let duration = chrono::Duration::seconds(secs)
+                    + chrono::Duration::nanoseconds(nanos)
+                    + days_duration;
+
+                visitor.visit_string(duration.to_string())
+            }
+            "CHAR" | "TEXT" => visitor.visit_string(decode_raw_pg::<String>(self.value)),
+            "JSON" | "JSONB" => {
+                let value: serde_json::Value =
+                    serde_json::from_str(decode_raw_pg::<&str>(self.value))
+                        .map_err(DeError::custom)?;
+
+                let json_map = JsonValueMapAccess::new(value).map_err(DeError::custom)?;
+                visitor.visit_map(json_map)
+            }
+            // Fallback: decode as string
+            last => {
+                println!("In fallback (PgValueDeserializer): last is {last}");
+                let as_string = decode_raw_pg::<String>(self.value);
+                visitor.visit_string(as_string)
+
+                // visitor.visit_some(deserializer)
+            }
         }
     }
 
-    fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::DeserializeSeed<'de>,
-    {
-        let col = &self.row.columns()[self.index];
-        let value = pgsql_to_json(self.row, col);
-        self.index += 1;
-        seed.deserialize(value.into_deserializer())
-            .map_err(DeError::custom)
-    }
-}
-
-/// Convert a PgRow column into a serde_json::Value.
-pub fn pgsql_to_json(row: &PgRow, col: &PgColumn) -> JsonValue {
-    // Use try_get_raw to get a raw value.
-    let raw_value_result = row.try_get_raw(col.ordinal());
-    match raw_value_result {
-        Ok(raw_value) if !raw_value.is_null() => {
-            // We take the raw value and convert it (see below).
-            let mut raw_value = Some(raw_value);
-            sql_nonnull_to_json_pg(|| {
-                raw_value
-                    .take()
-                    .unwrap_or_else(|| row.try_get_raw(col.ordinal()).unwrap())
-            })
-        }
-        Ok(_null) => JsonValue::Null,
-        Err(e) => {
-            log::warn!(
-                "Unable to extract value from row for column `{}`: {:?}",
-                col.name(),
-                e
-            );
-            JsonValue::Null
-        }
-    }
-}
-
-/// Decode a non-null Postgres value into a JsonValue by matching on its type name.
-/// This match arm covers common Postgres types.
-fn sql_nonnull_to_json_pg<'r>(mut get_ref: impl FnMut() -> PgValueRef<'r>) -> JsonValue {
-    let raw_value = get_ref();
-    let type_info = raw_value.type_info();
-    let type_name = type_info.name();
-
-    match type_name {
-        // Floating point numbers (NUMERIC/DECIMAL are decoded as f64)
-        "REAL" | "FLOAT" | "FLOAT4" | "FLOAT8" | "DOUBLE" | "NUMERIC" | "DECIMAL" => {
-            decode_raw_pg::<f64>(raw_value).into()
-        }
-        // 64-bit signed integers
-        "INT8" | "BIGINT" | "SERIAL8" | "BIGSERIAL" | "IDENTITY" | "INT64" | "INTEGER8"
-        | "BIGINT SIGNED" => decode_raw_pg::<i64>(raw_value).into(),
-        // 32-bit signed integers
-        "INT" | "INT4" | "INTEGER" | "MEDIUMINT" | "YEAR" => decode_raw_pg::<i32>(raw_value).into(),
-        // 16-bit signed integers
-        "INT2" | "SMALLINT" | "TINYINT" => decode_raw_pg::<i16>(raw_value).into(),
-        // Boolean values
-        "BOOL" | "BOOLEAN" => decode_raw_pg::<bool>(raw_value).into(),
-        // Date and time types (convert to strings)
-        "DATE" => decode_raw_pg::<chrono::NaiveDate>(raw_value)
-            .to_string()
-            .into(),
-        "TIME" | "TIMETZ" => decode_raw_pg::<chrono::NaiveTime>(raw_value)
-            .to_string()
-            .into(),
-        "TIMESTAMP" | "TIMESTAMPTZ" => {
-            decode_raw_pg::<chrono::DateTime<chrono::FixedOffset>>(raw_value)
-                .to_rfc3339()
-                .into()
-        }
-        // UUID (convert to string)
-        "UUID" => decode_raw_pg::<uuid::Uuid>(raw_value).to_string().into(),
-        // Binary data: BYTEA
-        "BYTEA" => decode_raw_pg::<Vec<u8>>(raw_value).into(),
-        // Interval types (Postgres returns intervals as a custom type; here we convert to string)
-        // "INTERVAL" => decode_raw_pg::<sqlx::postgres::types::PgInterval>(raw_value).to_string().into(),
-        // JSON types are decoded directly as a serde_json::Value.
-        "JSON" | "JSONB" => decode_raw_pg::<JsonValue>(raw_value),
-        // Fallback: decode as string
-        _ => decode_raw_pg::<String>(raw_value).into(),
+    // For other types, forward to deserialize_any.
+    forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string
+        bytes byte_buf unit unit_struct option newtype_struct struct
+        tuple_struct enum identifier ignored_any tuple seq map
     }
 }
 
