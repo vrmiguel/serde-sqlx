@@ -30,7 +30,6 @@ async fn a_one_item_tuple() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn a_one_item_tuple_unannotated() {
     let rows: Vec<(bool,)> = fetch_all("SELECT true UNION ALL SELECT false")
         .await

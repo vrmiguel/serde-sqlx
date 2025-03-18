@@ -90,11 +90,7 @@ impl<'de, 'a> MapAccess<'de> for PgRowMapAccess<'a> {
             .row
             .try_get_raw(self.deserializer.index)
             .map_err(DeError::custom)?;
-        let pg_type_deserializer = PgValueDeserializer {
-            outer: self.deserializer,
-            value,
-            index: self.deserializer.index,
-        };
+        let pg_type_deserializer = PgValueDeserializer { value };
 
         println!(
             "Starting pg_type_deserializer for index {}",

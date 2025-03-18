@@ -1,7 +1,7 @@
-use serde::Deserialize;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use tokio::sync::OnceCell;
 
+#[allow(unused)]
 pub async fn fetch_one<T: for<'de> serde::Deserialize<'de>>(query: &str) -> anyhow::Result<T> {
     let conn = conn().await;
 
@@ -10,6 +10,7 @@ pub async fn fetch_one<T: for<'de> serde::Deserialize<'de>>(query: &str) -> anyh
     serde_sqlx::from_pg_row(row).map_err(Into::into)
 }
 
+#[allow(unused)]
 pub async fn fetch_all<T: for<'de> serde::Deserialize<'de>>(query: &str) -> anyhow::Result<Vec<T>> {
     let conn = conn().await;
 
@@ -19,6 +20,7 @@ pub async fn fetch_all<T: for<'de> serde::Deserialize<'de>>(query: &str) -> anyh
     result.map_err(Into::into)
 }
 
+#[allow(unused)]
 pub async fn fetch_optional<T: for<'de> serde::Deserialize<'de>>(
     query: &str,
 ) -> anyhow::Result<Option<T>> {

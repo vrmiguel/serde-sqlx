@@ -49,7 +49,6 @@ async fn two_prim_field_struct() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn two_indirect_prim_fields_struct() {
     #[derive(Debug, ::serde::Deserialize, PartialEq, Eq)]
     struct Left {

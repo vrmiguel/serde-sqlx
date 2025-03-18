@@ -1,4 +1,5 @@
 use map_access::{JsonValueMapAccess, PgRowMapAccess};
+use seq_access::{PgArraySeqAccess, PgRowSeqAccess};
 use serde::de::Error as _;
 use serde::de::{value::Error as DeError, Deserialize, Deserializer, Visitor};
 use serde::forward_to_deserialize_any;
@@ -6,6 +7,7 @@ use sqlx::postgres::{PgRow, PgValueRef};
 use sqlx::{Row, TypeInfo, ValueRef};
 
 mod map_access;
+mod seq_access;
 
 /// Convenience function: deserialize a PgRow into any T that implements Deserialize
 pub fn from_pg_row<T>(row: PgRow) -> Result<T, DeError>
@@ -62,7 +64,7 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
         match self.row.columns().len() {
             0 => return visitor.visit_unit(),
             1 => {}
-            _ => unimplemented!("deserialize_any (many columns: {:#?})", self.row.columns()),
+            _ => return self.deserialize_seq(visitor),
         };
 
         let raw_value = self.row.try_get_raw(self.index).map_err(DeError::custom)?;
@@ -79,11 +81,7 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
                 println!("In fallback (PgRowDeserializer): last is {last}");
 
                 // Direct all "basic" types down to `PgValueDeserializer`
-                let deserializer = PgValueDeserializer {
-                    outer: self,
-                    value: raw_value,
-                    index: 0,
-                };
+                let deserializer = PgValueDeserializer { value: raw_value };
 
                 deserializer.deserialize_any(visitor)
             }
@@ -105,10 +103,15 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
     where
         V: Visitor<'de>,
     {
-        todo!()
+        let seq_access = PgRowSeqAccess {
+            deserializer: self,
+            num_cols: self.row.columns().len(),
+        };
+
+        visitor.visit_seq(seq_access)
     }
 
-    fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_tuple<V>(self, _len: usize, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
@@ -139,12 +142,21 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
 #[derive(Clone)]
 pub struct PgValueDeserializer<'a> {
     value: PgValueRef<'a>,
-    outer: PgRowDeserializer<'a>,
-    index: usize,
 }
 
 impl<'de, 'a> Deserializer<'de> for PgValueDeserializer<'a> {
     type Error = DeError;
+
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        if self.value.is_null() {
+            visitor.visit_none()
+        } else {
+            visitor.visit_some(self)
+        }
+    }
 
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
@@ -215,13 +227,15 @@ impl<'de, 'a> Deserializer<'de> for PgValueDeserializer<'a> {
                 let json_map = JsonValueMapAccess::new(value).map_err(DeError::custom)?;
                 visitor.visit_map(json_map)
             }
+            "TEXT[]" | "VARCHAR[]" => {
+                let seq_access = PgArraySeqAccess::<String>::new(self.value);
+                visitor.visit_seq(seq_access)
+            }
             // Fallback: decode as string
             last => {
                 println!("In fallback (PgValueDeserializer): last is {last}");
                 let as_string = decode_raw_pg::<String>(self.value);
                 visitor.visit_string(as_string)
-
-                // visitor.visit_some(deserializer)
             }
         }
     }
@@ -229,7 +243,7 @@ impl<'de, 'a> Deserializer<'de> for PgValueDeserializer<'a> {
     // For other types, forward to deserialize_any.
     forward_to_deserialize_any! {
         bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string
-        bytes byte_buf unit unit_struct option newtype_struct struct
+        bytes byte_buf unit unit_struct newtype_struct struct
         tuple_struct enum identifier ignored_any tuple seq map
     }
 }
