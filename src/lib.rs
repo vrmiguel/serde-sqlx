@@ -1,11 +1,13 @@
-use map_access::{JsonValueMapAccess, PgRowMapAccess};
+use json::PgJson;
+use map_access::PgRowMapAccess;
 use seq_access::{PgArraySeqAccess, PgRowSeqAccess};
-use serde::de::Error as _;
 use serde::de::{value::Error as DeError, Deserialize, Deserializer, Visitor};
+use serde::de::{Error as _, IntoDeserializer};
 use serde::forward_to_deserialize_any;
 use sqlx::postgres::{PgRow, PgValueRef};
 use sqlx::{Row, TypeInfo, ValueRef};
 
+mod json;
 mod map_access;
 mod seq_access;
 
@@ -119,6 +121,10 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
             "INT4[]" => {
                 println!("INT4 found!");
                 let seq_access = PgArraySeqAccess::<i32>::new(raw_value)?;
+                visitor.visit_seq(seq_access)
+            }
+            "JSON[]" | "JSONB[]" => {
+                let seq_access = PgArraySeqAccess::<PgJson>::new(raw_value)?;
                 visitor.visit_seq(seq_access)
             }
             "BOOL[]" => {
@@ -267,11 +273,10 @@ impl<'de, 'a> Deserializer<'de> for PgValueDeserializer<'a> {
                 visitor.visit_string(s)
             }
             "JSON" | "JSONB" => {
-                let s = decode_raw_pg::<&str>(self.value)
+                let value = decode_raw_pg::<PgJson>(self.value)
                     .ok_or_else(|| DeError::custom("Failed to decode JSON/JSONB"))?;
-                let value: serde_json::Value = serde_json::from_str(s).map_err(DeError::custom)?;
-                let json_map = JsonValueMapAccess::new(value).map_err(DeError::custom)?;
-                visitor.visit_map(json_map)
+
+                value.into_deserializer().deserialize_any(visitor)
             }
             last => {
                 println!("In fallback (PgValueDeserializer): last is {last}");
