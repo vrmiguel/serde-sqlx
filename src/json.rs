@@ -5,18 +5,36 @@ use serde::{
 use serde_json::Value;
 use sqlx::{
     postgres::{PgTypeInfo, PgValueRef},
-    Postgres,
+    Postgres, TypeInfo, ValueRef,
 };
 
+/// Decodes Postgres' JSON or JSONB into serde_json::Value
 #[derive(Debug)]
 pub(crate) struct PgJson(pub(crate) serde_json::Value);
 
 impl<'a> sqlx::Decode<'a, sqlx::Postgres> for PgJson {
     fn decode(value: PgValueRef<'a>) -> Result<Self, sqlx::error::BoxDynError> {
-        let s = <&str as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+        let is_jsonb = match value.type_info().name() {
+            "JSON" => false,
+            "JSONB" => true,
+            other => unreachable!("Got {other} in PgJson"),
+        };
 
-        let v = serde_json::from_str(s)?;
-        Ok(PgJson(v))
+        let mut bytes = value.as_bytes()?;
+
+        // For JSONB, the first byte is a version (should be 1)
+        if is_jsonb {
+            if bytes.is_empty() || bytes[0] != 1 {
+                return Err("invalid JSONB header".into());
+            }
+
+            // Skip the version byte
+            bytes = &bytes[1..]
+        };
+
+        let value = serde_json::from_slice(bytes)?;
+
+        Ok(PgJson(value))
     }
 }
 
@@ -30,9 +48,6 @@ pub struct PgJsonDeserializer {
     value: Value,
 }
 
-// impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
-//     type Error = DeError;
-
 impl<'de> Deserializer<'de> for PgJsonDeserializer {
     type Error = DeError;
 
@@ -40,7 +55,7 @@ impl<'de> Deserializer<'de> for PgJsonDeserializer {
     where
         V: de::Visitor<'de>,
     {
-        // Delegate to serde_json::Value's own Deserializer implementation.
+        // Delegate to serde_json::Value's own Deserializer
         self.value.deserialize_any(visitor).map_err(DeError::custom)
     }
 

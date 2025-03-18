@@ -5,7 +5,7 @@ use serde::de::{value::Error as DeError, Deserialize, Deserializer, Visitor};
 use serde::de::{Error as _, IntoDeserializer};
 use serde::forward_to_deserialize_any;
 use sqlx::postgres::{PgRow, PgValueRef};
-use sqlx::{Row, TypeInfo, ValueRef};
+use sqlx::{Column, Row, TypeInfo, ValueRef};
 
 mod json;
 mod map_access;
@@ -29,6 +29,12 @@ pub struct PgRowDeserializer<'a> {
 impl<'a> PgRowDeserializer<'a> {
     pub fn new(row: &'a PgRow) -> Self {
         PgRowDeserializer { row, index: 0 }
+    }
+
+    pub fn is_json(&self) -> bool {
+        self.row.try_get_raw(0).map_or(false, |value| {
+            matches!(value.type_info().name(), "JSON" | "JSONB")
+        })
     }
 }
 
@@ -106,8 +112,6 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
     where
         V: Visitor<'de>,
     {
-        println!("Columns: {}", self.row.columns().len());
-
         let raw_value = self.row.try_get_raw(self.index).map_err(DeError::custom)?;
         let type_info = raw_value.type_info();
         let type_name = type_info.name();
@@ -152,12 +156,54 @@ impl<'de, 'a> Deserializer<'de> for PgRowDeserializer<'a> {
     fn deserialize_struct<V>(
         self,
         _name: &'static str,
-        _fields: &'static [&'static str],
+        fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
+        let raw_value = self.row.try_get_raw(self.index).map_err(DeError::custom)?;
+        let type_info = raw_value.type_info();
+        let type_name = type_info.name();
+
+        if type_name == "JSON" || type_name == "JSONB" {
+            let value = decode_raw_pg::<PgJson>(raw_value)
+                .ok_or_else(|| DeError::custom("Failed to decode JSON/JSONB"))?;
+
+            if let serde_json::Value::Object(ref obj) = value.0 {
+                if fields.len() == 1 {
+                    // If there's only one expected field, check if the object already contains it.
+                    if obj.contains_key(fields[0]) {
+                        // If so, we can deserialize directly.
+                        return value.into_deserializer().deserialize_any(visitor);
+                    } else {
+                        // Otherwise, wrap the object in a new map keyed by that field name.
+                        let mut map = serde_json::Map::new();
+                        map.insert(fields[0].to_owned(), value.0);
+                        return map
+                            .into_deserializer()
+                            .deserialize_any(visitor)
+                            .map_err(DeError::custom);
+                    }
+                } else {
+                    // For multiple expected fields, ensure the JSON object already contains all of them.
+                    if fields.iter().all(|&field| obj.contains_key(field)) {
+                        return value.into_deserializer().deserialize_any(visitor);
+                    } else {
+                        return Err(DeError::custom(format!(
+                            "JSON object missing expected keys: expected {:?}, found keys {:?}",
+                            fields,
+                            obj.keys().collect::<Vec<_>>()
+                        )));
+                    }
+                }
+            } else {
+                // For non-object JSON values, delegate directly.
+                return value.into_deserializer().deserialize_any(visitor);
+            }
+        }
+
+        // Fallback for non-JSON types.
         self.deserialize_map(visitor)
     }
 
@@ -303,11 +349,11 @@ where
 {
     match T::decode(raw_value) {
         Ok(v) => Some(v),
-        Err(e) => {
+        Err(err) => {
             eprintln!(
                 "Failed to decode {} value: {:?}",
                 std::any::type_name::<T>(),
-                e
+                err,
             );
             None
         }
