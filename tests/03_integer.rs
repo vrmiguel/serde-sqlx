@@ -1,6 +1,6 @@
 mod util;
 
-use util::{fetch_all, fetch_one, fetch_optional};
+use util::{fetch_one, fetch_optional};
 
 #[tokio::test]
 async fn int2_as_i16() {
