@@ -1,7 +1,14 @@
 [package]
 name = "serde-sqlx"
-version = "0.1.0"
+description = "Allows deserializing Postgres rows into Rust types using serde"
+authors = ["Vinícius R. Miguel <vini@tembo.io>"]
+version = "0.0.1"
 edition = "2021"
+repository = "https://github.com/vrmiguel/serde-sqlx"
+readme = "README.md"
+license = "MIT"
+keywords = ["postgres", "sqlx", "serde"]
+categories = ["development-tools"]
 
 [dependencies]
 sqlx = { version = "0.8.2", features = [
@@ -10,6 +17,7 @@ sqlx = { version = "0.8.2", features = [
     "chrono",
     "json",
     "uuid",
+    "rust_decimal"
 ] }
 serde = { version = "1.0.214", features = ["derive"] }
 serde_json = "1.0.132"
@@ -18,15 +26,8 @@ uuid = { version = "1", features = [
     "v4",
     "serde",
 ] }
-log = "0.4.26"
+rust_decimal = "1.37.0"
 
 [dev-dependencies]
 tokio = { version = "1.36.0", features = ["full"] }
-sqlx = { version = "0.8.2", features = [
-    "runtime-tokio-native-tls",
-    "postgres",
-    "chrono",
-    "json",
-    "uuid",
-] }
 anyhow = "1.0.97"

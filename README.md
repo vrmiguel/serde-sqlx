@@ -30,13 +30,13 @@ Allows deserializing Postgres rows into Rust types using `serde`. Work in progre
   - Convert Postgres arrays into Rust vectors
   - Support for arrays of primitive types and nullable types
 
-### Planned 📝
+### Planned/untested 📝
 - **Enums**:
   - Support for Rust enums with Postgres enums or discriminated JSON
 - **Timestamps and Dates**:
-  - Support for chrono and time types
+  - Testing for chrono and time types
 - **UUID**:
-  - Support for uuid crate types
+  - Testing for uuid crate types
 
 ## Usage
 
