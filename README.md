@@ -26,7 +26,6 @@ Allows deserializing Postgres rows into Rust types using `serde`. Work in progre
 - **Newtypes**:
   - Support for newtype pattern (e.g., `struct UserId(i32)`)
 
-### In Progress 🚧
 - **PostgreSQL Arrays**:
   - Convert Postgres arrays into Rust vectors
   - Support for arrays of primitive types and nullable types

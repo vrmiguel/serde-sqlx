@@ -6,7 +6,6 @@ use util::fetch_all;
 use serde_json::Value as JsValue;
 
 #[tokio::test]
-#[ignore]
 async fn single_json_field_into_a_record() {
     #[derive(Debug, Deserialize, PartialEq, Eq)]
     struct Record {
