@@ -121,7 +121,7 @@ async fn complex_json_arrays() -> anyhow::Result<()> {
                 UNION ALL
                 SELECT 
                     '"world"' :: JSON, 
-                    '{"name": "Bob", "age": 3}' :: JSON, 
+                    '{"name": "Bob", "age": null}' :: JSON, 
                     '42' :: JSONB
                 UNION ALL
                 SELECT 
@@ -143,7 +143,7 @@ async fn complex_json_arrays() -> anyhow::Result<()> {
             ],
             object_jsons: vec![
                 serde_json::json!({"name": "Alice", "age": 30}),
-                serde_json::json!({"name": "Bob", "age": 3}),
+                serde_json::json!({"name": "Bob", "age": null}),
                 serde_json::json!({"name": "Charlie", "age": 35})
             ],
             mixed_jsonbs: vec![
