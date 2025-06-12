@@ -567,8 +567,6 @@ mod json {
                                 if let Ok(num) = decoded_string.parse::<i64>() {
                                     Ok(PgJson(serde_json::Value::Number(num.into())))
                                 } else {
-                                    // For string literals (including ignored attributes with string literals),
-                                    // we need to handle them properly by returning a JSON string value
                                     Ok(PgJson(serde_json::Value::String(decoded_string)))
                                 }
                             }
