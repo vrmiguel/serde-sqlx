@@ -569,7 +569,6 @@ mod json {
                                 } else {
                                     // For string literals (including ignored attributes with string literals),
                                     // we need to handle them properly by returning a JSON string value
-                                    // Return decoded string directly as a JSON string value
                                     Ok(PgJson(serde_json::Value::String(decoded_string)))
                                 }
                             }
