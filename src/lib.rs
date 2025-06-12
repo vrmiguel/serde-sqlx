@@ -547,10 +547,29 @@ mod json {
 
     impl<'a> sqlx::Decode<'a, sqlx::Postgres> for PgJson {
         fn decode(value: PgValueRef<'a>) -> Result<Self, sqlx::error::BoxDynError> {
-            let is_jsonb = match value.type_info().name() {
+            let type_name = value.type_info().name();
+            let is_jsonb = match type_name {
                 "JSON" => false,
                 "JSONB" => true,
-                other => unreachable!("Got {other} in PgJson"),
+                other => {
+                    // Handle the case where this might be part of an array
+                    if other == "JSON[]" || other == "JSONB[]" {
+                        // For array elements, we're already getting the inner value
+                        return match serde_json::from_str::<serde_json::Value>(&String::decode(value)?) {
+                            Ok(json_value) => Ok(PgJson(json_value)),
+                            Err(_) => {
+                                // Try as a numeric value
+                                if let Ok(num) = String::decode(value)?.parse::<i64>() {
+                                    Ok(PgJson(serde_json::Value::Number(num.into())))
+                                } else {
+                                    // Return as string if all else fails
+                                    Ok(PgJson(serde_json::Value::String(String::decode(value)?)))
+                                }
+                            }
+                        };
+                    }
+                    unreachable!("Got {other} in PgJson")
+                }
             };
 
             let mut bytes = value.as_bytes()?;
