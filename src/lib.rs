@@ -562,8 +562,9 @@ mod json {
                                 if let Ok(num) = String::decode(value)?.parse::<i64>() {
                                     Ok(PgJson(serde_json::Value::Number(num.into())))
                                 } else {
-                                    // Return as string if all else fails
-                                    Ok(PgJson(serde_json::Value::String(String::decode(value)?)))
+                                    // Return as byte array if all else fails
+                                    let bytes = value.as_bytes()?;
+                                    Ok(PgJson(serde_json::Value::String(String::from_utf8_lossy(bytes).to_string())))
                                 }
                             }
                         };
