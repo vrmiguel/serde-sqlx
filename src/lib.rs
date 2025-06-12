@@ -547,7 +547,8 @@ mod json {
 
     impl<'a> sqlx::Decode<'a, sqlx::Postgres> for PgJson {
         fn decode(value: PgValueRef<'a>) -> Result<Self, sqlx::error::BoxDynError> {
-            let type_name = value.type_info().name();
+            let type_info = value.type_info();
+            let type_name = type_info.name();
             let is_jsonb = match type_name {
                 "JSON" => false,
                 "JSONB" => true,
@@ -555,16 +556,21 @@ mod json {
                     // Handle the case where this might be part of an array
                     if other == "JSON[]" || other == "JSONB[]" {
                         // For array elements, we're already getting the inner value
-                        return match serde_json::from_str::<serde_json::Value>(&String::decode(value)?) {
+                        // Use String::decode with the Postgres type
+                        let decoded_string = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+                        
+                        // First try to parse as JSON
+                        return match serde_json::from_str::<serde_json::Value>(&decoded_string) {
                             Ok(json_value) => Ok(PgJson(json_value)),
                             Err(_) => {
                                 // Try as a numeric value
-                                if let Ok(num) = String::decode(value)?.parse::<i64>() {
+                                if let Ok(num) = decoded_string.parse::<i64>() {
                                     Ok(PgJson(serde_json::Value::Number(num.into())))
                                 } else {
-                                    // Return as byte array if all else fails
-                                    let bytes = value.as_bytes()?;
-                                    Ok(PgJson(serde_json::Value::String(String::from_utf8_lossy(bytes).to_string())))
+                                    // For string literals (including ignored attributes with string literals),
+                                    // we need to handle them properly by returning a JSON string value
+                                    // Return decoded string directly as a JSON string value
+                                    Ok(PgJson(serde_json::Value::String(decoded_string)))
                                 }
                             }
                         };
