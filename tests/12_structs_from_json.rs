@@ -97,3 +97,62 @@ async fn single_json_field_into_a_record_field() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn complex_json_arrays() -> anyhow::Result<()> {
+    #[derive(Debug, serde::Deserialize, PartialEq)]
+    struct Record {
+        string_jsons: Vec<JsValue>,
+        object_jsons: Vec<JsValue>,
+        mixed_jsonbs: Vec<JsValue>,
+    }
+
+    let rows: Vec<Record> = fetch_all(
+        r#"
+            SELECT 
+                array_agg(R.sj) string_jsons, 
+                array_agg(R.oj) object_jsons, 
+                array_agg(R.mj) mixed_jsonbs 
+            FROM (
+                SELECT 
+                    '"hello"' :: JSON sj, 
+                    '{"name": "Alice", "age": 30}' :: JSON oj, 
+                    '"text"' :: JSONB mj
+                UNION ALL
+                SELECT 
+                    '"world"' :: JSON, 
+                    '{"name": "Bob", "age": 25}' :: JSON, 
+                    '42' :: JSONB
+                UNION ALL
+                SELECT 
+                    '"!"' :: JSON, 
+                    '{"name": "Charlie", "age": 35}' :: JSON, 
+                    '{"complex": [1, 2, 3]}' :: JSONB
+            ) R
+        "#,
+    )
+    .await?;
+
+    assert_eq!(
+        rows,
+        vec![Record {
+            string_jsons: vec![
+                serde_json::json!("hello"), 
+                serde_json::json!("world"),
+                serde_json::json!("!")
+            ],
+            object_jsons: vec![
+                serde_json::json!({"name": "Alice", "age": 30}),
+                serde_json::json!({"name": "Bob", "age": 25}),
+                serde_json::json!({"name": "Charlie", "age": 35})
+            ],
+            mixed_jsonbs: vec![
+                serde_json::json!("text"),
+                serde_json::json!(42),
+                serde_json::json!({"complex": [1, 2, 3]})
+            ]
+        }]
+    );
+
+    Ok(())
+}
