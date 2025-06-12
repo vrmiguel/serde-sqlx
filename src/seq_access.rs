@@ -1,8 +1,9 @@
 use std::fmt::Debug;
 
-use serde::de::{value::Error as DeError, DeserializeSeed, SeqAccess, Visitor};
+use serde::de::{self, value::Error as DeError, DeserializeSeed, SeqAccess, Visitor};
+use serde::de::value::NoneDeserializer;
 use serde::ser::Error as _;
-use serde::{de, forward_to_deserialize_any};
+use serde::forward_to_deserialize_any;
 use sqlx::{postgres::PgValueRef, Row};
 
 use crate::{
@@ -116,7 +117,7 @@ impl<'de> SeqAccess<'de> for PgJsonArraySeqAccess<'_> {
                 let json_value = pg_json.0;
                 seed.deserialize(json_value.into_deserializer()).map(Some)
             }
-            Some(None) => seed.deserialize(de::value::NoneDeserializer::default()).map(Some),
+            Some(None) => seed.deserialize(NoneDeserializer::default()).map(Some),
             None => Ok(None),
         }
     }

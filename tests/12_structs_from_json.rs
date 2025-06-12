@@ -259,3 +259,113 @@ async fn nested_json_and_jsonb_arrays() {
         }
     );
 }
+
+#[tokio::test]
+async fn json_array_with_large_dataset() {
+    #[derive(Debug, serde::Deserialize, PartialEq)]
+    struct Record {
+        large_json_array: Vec<JsValue>,
+    }
+
+    let row: Record = fetch_one(
+        r#"
+            SELECT 
+                ARRAY(
+                    SELECT json_build_object(
+                        'id', generate_series(1, 100),
+                        'name', concat('item', generate_series(1, 100)),
+                        'value', generate_series(1, 100) * 10
+                    )
+                )::JSON[] AS large_json_array
+        "#,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(row.large_json_array.len(), 100);
+    assert_eq!(row.large_json_array[0], serde_json::json!({"id": 1, "name": "item1", "value": 10}));
+    assert_eq!(row.large_json_array[99], serde_json::json!({"id": 100, "name": "item100", "value": 1000}));
+}
+
+#[tokio::test]
+async fn deeply_nested_json_structure() {
+    #[derive(Debug, serde::Deserialize, PartialEq)]
+    struct Record {
+        deep_json: Vec<JsValue>,
+    }
+
+    let row: Record = fetch_one(
+        r#"
+            SELECT 
+                ARRAY[
+                    '{
+                        "level1": {
+                            "level2": {
+                                "level3": {
+                                    "level4": {
+                                        "data": [1, 2, 3],
+                                        "info": {"type": "nested", "depth": 4}
+                                    }
+                                }
+                            }
+                        }
+                    }'::JSON
+                ]::JSON[] AS deep_json
+        "#,
+    )
+    .await
+    .unwrap();
+
+    let expected = serde_json::json!({
+        "level1": {
+            "level2": {
+                "level3": {
+                    "level4": {
+                        "data": [1, 2, 3],
+                        "info": {"type": "nested", "depth": 4}
+                    }
+                }
+            }
+        }
+    });
+
+    assert_eq!(row.deep_json[0], expected);
+}
+
+#[tokio::test]
+async fn typed_json_struct_array() {
+    #[derive(Debug, serde::Deserialize, PartialEq)]
+    struct Item {
+        id: i32,
+        name: String,
+    }
+
+    #[derive(Debug, serde::Deserialize, PartialEq)]
+    struct Record {
+        typed_items: Vec<Item>,
+    }
+
+    let row: Record = fetch_one(
+        r#"
+            SELECT 
+                ARRAY[
+                    '{"id": 1, "name": "item1"}'::JSON,
+                    '{"id": 2, "name": "item2"}'::JSON,
+                    '{"id": 3, "name": "item3"}'::JSON
+                ]::JSON[] AS typed_items
+        "#,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        row,
+        Record {
+            typed_items: vec![
+                Item { id: 1, name: "item1".to_string() },
+                Item { id: 2, name: "item2".to_string() },
+                Item { id: 3, name: "item3".to_string() },
+            ],
+        }
+    );
+}
