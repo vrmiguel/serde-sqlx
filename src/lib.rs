@@ -321,7 +321,7 @@ mod deserializers {
                     visitor.visit_seq(seq_access)
                 }
                 "JSON[]" | "JSONB[]" => {
-                    let seq_access = PgArraySeqAccess::<PgJson>::new(raw_value)?;
+                    let seq_access = seq_access::PgJsonArraySeqAccess::new(raw_value)?;
                     visitor.visit_seq(seq_access)
                 }
                 "BOOL[]" => {
