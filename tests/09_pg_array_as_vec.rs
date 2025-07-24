@@ -63,3 +63,37 @@ async fn pg_arr_of_jsonb_as_vec_of_jsvalue() {
     .unwrap();
     assert_eq!(rows, vec![vec![serde_json::json!(1), serde_json::json!(2)]]);
 }
+
+#[tokio::test]
+async fn pg_text_array_empty() {
+    let rows: Vec<Vec<String>> = fetch_all("SELECT ARRAY[]::TEXT[] _0")
+        .await
+        .unwrap();
+    assert_eq!(rows, vec![vec![]]);
+}
+
+#[tokio::test]
+async fn pg_text_array_single_element() {
+    let rows: Vec<Vec<String>> = fetch_all("SELECT ARRAY['single']::TEXT[] _0")
+        .await
+        .unwrap();
+    assert_eq!(rows, vec![vec!["single".to_owned()]]);
+}
+
+#[tokio::test]
+async fn pg_text_array_with_special_chars() {
+    let rows: Vec<Vec<String>> = fetch_all(
+        "SELECT ARRAY['hello world', 'with\"quotes', 'and''apostrophes', 'newline\nchar']::TEXT[] _0"
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![vec![
+            "hello world".to_owned(),
+            "with\"quotes".to_owned(),
+            "and'apostrophes".to_owned(),
+            "newline\nchar".to_owned()
+        ]]
+    );
+}
