@@ -80,3 +80,7 @@ async fn get_users(pool: &PgPool) -> anyhow::Result<Vec<User>> {
     users.map_err(Into::into)
 }
 ```
+
+## Related Projects
+
+Check out [Tembo monorepo](https://github.com/tembo-io/monorepo) - A comprehensive suite of tools and services for PostgreSQL development and management. The monorepo contains web applications, APIs, and database components that might benefit from using serde-sqlx for Postgres data handling.
