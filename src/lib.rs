@@ -9,6 +9,7 @@ pub fn from_pg_row<T>(row: PgRow) -> Result<T, DeError>
 where
     T: for<'de> Deserialize<'de>,
 {
+    println!("serde-sqlx: Deserializing PgRow into struct");
     let deserializer = PgRowDeserializer::new(&row);
     T::deserialize(deserializer)
 }
