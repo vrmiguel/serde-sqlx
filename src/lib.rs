@@ -320,6 +320,26 @@ mod deserializers {
                     let seq_access = PgArraySeqAccess::<i32>::new(raw_value)?;
                     visitor.visit_seq(seq_access)
                 }
+                "INT8[]" => {
+                    let seq_access = PgArraySeqAccess::<i64>::new(raw_value)?;
+                    visitor.visit_seq(seq_access)
+                }
+                "INT2[]" => {
+                    let seq_access = PgArraySeqAccess::<i16>::new(raw_value)?;
+                    visitor.visit_seq(seq_access)
+                }
+                "FLOAT4[]" => {
+                    let seq_access = PgArraySeqAccess::<f32>::new(raw_value)?;
+                    visitor.visit_seq(seq_access)
+                }
+                "FLOAT8[]" => {
+                    let seq_access = PgArraySeqAccess::<f64>::new(raw_value)?;
+                    visitor.visit_seq(seq_access)
+                }
+                "UUID[]" => {
+                    let seq_access = PgArraySeqAccess::<uuid::Uuid>::new(raw_value)?;
+                    visitor.visit_seq(seq_access)
+                }
                 "JSON[]" | "JSONB[]" => {
                     let seq_access = PgArraySeqAccess::<PgJson>::new(raw_value)?;
                     visitor.visit_seq(seq_access)
