@@ -1,7 +1,5 @@
-mod util;
-
+use crate::fetch_all;
 use std::collections::HashMap;
-use util::fetch_all;
 
 #[tokio::test]
 async fn text_columns_into_hashmap() {

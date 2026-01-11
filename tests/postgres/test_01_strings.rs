@@ -1,6 +1,5 @@
-mod util;
+use crate::{fetch_all, fetch_one, fetch_optional};
 
-use util::{fetch_all, fetch_one, fetch_optional};
 #[tokio::test]
 async fn unannotated_as_string() {
     let row: String = fetch_one("SELECT 'a string' AS greeting").await.unwrap();

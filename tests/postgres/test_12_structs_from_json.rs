@@ -1,7 +1,5 @@
-mod util;
-
+use crate::{fetch_all, fetch_one};
 use serde::Deserialize;
-use util::fetch_all;
 
 use serde_json::Value as JsValue;
 
@@ -14,7 +12,7 @@ async fn single_json_field_into_a_record() {
         three: i32,
     }
 
-    let row: Record = util::fetch_one(
+    let row: Record = fetch_one(
         r#"
             SELECT '{"one": 1, "two": 2, "three": 3}' :: JSON
         "#,
@@ -42,7 +40,7 @@ async fn a_record_with_vec_of_js_value_fields() {
         jsonbs: Vec<JsValue>,
     }
 
-    let rows: Vec<Record> = util::fetch_all(
+    let rows: Vec<Record> = fetch_all(
         r#"
             SELECT array_agg(R.i) integers, array_agg(R.j) jsons, array_agg(R.b) jsonbs FROM (
                 SELECT 1 i, '1' :: JSON j, '1' :: JSONB b 

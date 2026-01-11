@@ -1,7 +1,5 @@
-mod util;
-
+use crate::fetch_all;
 use serde_json::Value as JsValue;
-use util::fetch_all;
 
 #[tokio::test]
 async fn pg_arr_of_bool_as_vec_bool() {

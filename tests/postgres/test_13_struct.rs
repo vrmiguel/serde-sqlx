@@ -1,7 +1,5 @@
-mod util;
-
+use crate::{fetch_all, fetch_one};
 use serde::Deserialize;
-use util::{fetch_all, fetch_one};
 
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct QueryStats {

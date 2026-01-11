@@ -1,6 +1,4 @@
-use util::{fetch_all, fetch_one};
-
-mod util;
+use crate::{fetch_all, fetch_one};
 
 #[derive(Debug, serde::Deserialize, PartialEq, Eq)]
 struct NewType<T>(T);

@@ -1,6 +1,4 @@
-use util::fetch_all;
-
-mod util;
+use crate::fetch_all;
 
 #[tokio::test]
 async fn one_prim_field_struct() {
@@ -9,7 +7,7 @@ async fn one_prim_field_struct() {
         the_field: bool,
     }
 
-    let rows: Vec<OneFieldStruct> = fetch_all("SELECT true the_field UNION ALL SELECT false")
+    let rows: Vec<OneFieldStruct> = fetch_all("SELECT true AS the_field UNION ALL SELECT false")
         .await
         .unwrap();
     assert_eq!(
@@ -30,7 +28,7 @@ async fn two_prim_field_struct() {
     }
 
     let rows: Vec<TwoFieldStruct> =
-        fetch_all("SELECT true first_field, 42 second_field UNION ALL SELECT false, 0")
+        fetch_all("SELECT true AS first_field, 42 AS second_field UNION ALL SELECT false, 0")
             .await
             .unwrap();
     assert_eq!(
@@ -68,7 +66,7 @@ async fn two_indirect_prim_fields_struct() {
     }
 
     let rows: Vec<OneFieldStruct> =
-        fetch_all("SELECT true first_field, 42 second_field UNION ALL SELECT false, 0")
+        fetch_all("SELECT true AS first_field, 42 AS second_field UNION ALL SELECT false, 0")
             .await
             .unwrap();
     assert_eq!(

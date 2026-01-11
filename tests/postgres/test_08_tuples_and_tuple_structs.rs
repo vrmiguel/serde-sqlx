@@ -1,6 +1,4 @@
-mod util;
-
-use util::fetch_all;
+use crate::fetch_all;
 
 #[tokio::test]
 async fn tuple_struct() {
